@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Neon Shooter: Turret Defense v2</title>
+    <title>Neon Shooter: Grenades</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; background: #000; }
         
@@ -51,6 +51,20 @@
         }
         .slot.active { border-color: #0f0; color: #0f0; background: rgba(0,255,0,0.2); box-shadow: 0 0 5px #0f0; }
 
+        /* Панель гранат */
+        .grenade-panel {
+            margin-top: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .grenade-icon {
+            width: 20px; height: 20px; background: #0f0; border-radius: 50%;
+            box-shadow: 0 0 5px #0f0;
+        }
+        .grenade-count { font-size: 20px; font-weight: bold; color: #0f0; }
+        .grenade-label { font-size: 12px; color: #aaa; }
+
         .stats-panel { text-align: right; }
         .hp-bar-bg { width: 200px; height: 15px; background: #333; margin-top: 5px; border: 1px solid #555; }
         .hp-bar-fill { width: 100%; height: 100%; background: #0f0; transition: width 0.2s; box-shadow: 0 0 10px #0f0; }
@@ -88,12 +102,24 @@
             pointer-events: none; transition: 0.1s; z-index: 5;
         }
         
-        #build-msg {
-            position: absolute; top: 60%; left: 50%; transform: translate(-50%, -50%);
-            color: #ff0; font-size: 18px; display: none; pointer-events: none;
-            text-shadow: 0 0 5px #000; animation: pulse 1s infinite;
+        /* Меню улучшения */
+        #upgrade-menu {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 20, 0, 0.9);
+            border: 2px solid #0f0;
+            padding: 20px;
+            color: white;
+            display: none;
+            z-index: 15;
+            text-align: center;
+            border-radius: 8px;
+            pointer-events: none;
         }
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        .up-title { font-size: 20px; color: #0f0; margin-bottom: 10px; font-weight: bold; }
+        .up-cost { font-size: 24px; color: #ff0; margin-bottom: 5px; }
+        .up-desc { font-size: 14px; color: #ccc; }
+
     </style>
     <script type="importmap">
         {
@@ -108,8 +134,14 @@
 
     <div id="crosshair"></div>
     <div id="damage-overlay"></div>
-    <div id="build-msg">CLICK TO BUILD TURRET (-200 PTS)</div>
     
+    <!-- Меню улучшения -->
+    <div id="upgrade-menu">
+        <div class="up-title" id="up-title">UPGRADE TURRET</div>
+        <div class="up-cost" id="up-cost">COST: 1000</div>
+        <div class="up-desc" id="up-desc">Next Level: Rapid Fire</div>
+    </div>
+
     <div id="ui-top">
         <div class="wave-title" id="ui-wave">WAVE 1</div>
         <div class="wave-info">Врагов: <span id="ui-enemies">20</span> | Счет: <span id="ui-score">0</span></div>
@@ -128,6 +160,15 @@
                 <div class="slot" id="slot-4">4</div>
                 <div class="slot" id="slot-5" style="color:#0ff">5</div>
             </div>
+            
+            <!-- Индикатор гранат -->
+            <div class="grenade-panel">
+                <div class="grenade-icon"></div>
+                <div>
+                    <div class="grenade-count" id="ui-grenades">3</div>
+                    <div class="grenade-label">GRENADES [G]</div>
+                </div>
+            </div>
         </div>
         <div class="stats-panel">
             <div style="font-size: 12px; color:#aaa;">ЗДОРОВЬЕ</div>
@@ -138,7 +179,11 @@
     <div id="blocker">
         <div class="menu-box">
             <h1>NEON DEFENSE</h1>
-            <p style="color:#aaa; margin-bottom: 20px;">Строй турели [5] и выживай.<br>WASD - Движение | ЛКМ - Атака</p>
+            <p style="color:#aaa; margin-bottom: 20px;">
+                [G] Бросить гранату<br>
+                [5] Строить / Улучшать турели<br>
+                Lvl6: QUAD ROCKET (15k)
+            </p>
             <button class="start-btn" id="start-btn">НАЧАТЬ</button>
         </div>
     </div>
@@ -149,15 +194,23 @@
 
         // --- КОНФИГУРАЦИЯ ---
         const ENEMIES_PER_WAVE = 20;
-        const BOSS_WAVE_NUM = 5;
+        const BOSS_INTERVAL = 5; 
         const TURRET_COST = 200;
+        const MAX_TURRETS = 5; 
+        
+        // Цены улучшений
+        const UPGRADE_LV2_COST = 1000;
+        const UPGRADE_LV3_COST = 2500;
+        const UPGRADE_LV4_COST = 5000;
+        const UPGRADE_LV5_COST = 9000;
+        const UPGRADE_LV6_COST = 15000;
 
         const WEAPONS = {
             blaster: { id: 1, name: "Pulse Gun", damage: 25, rate: 150, mag: 20, reload: 1200, color: 0x00ffff, speed: 100, spread: 0.02, auto: false },
             plasma: { id: 2, name: "Plasma SMG", damage: 8, rate: 70, mag: 50, reload: 2000, color: 0xff00ff, speed: 90, spread: 0.06, auto: true },
             flamethrower: { id: 3, name: "Incinerator", damage: 2, rate: 30, mag: 100, reload: 3000, color: 0xffaa00, speed: 25, spread: 0.25, auto: true, type: 'fire' },
             rocket: { id: 4, name: "Bazooka", damage: 150, rate: 1200, mag: 4, reload: 3500, color: 0x333333, speed: 40, spread: 0, auto: false, type: 'rocket' },
-            turret_tool: { id: 5, name: "Turret Builder", damage: 0, rate: 500, mag: 1, reload: 0, color: 0x00ff00, speed: 0, spread: 0, auto: false, type: 'tool' }
+            turret_tool: { id: 5, name: "Builder / Upgrader", damage: 0, rate: 500, mag: 1, reload: 0, color: 0x00ff00, speed: 0, spread: 0, auto: false, type: 'tool' }
         };
 
         // --- ПЕРЕМЕННЫЕ ---
@@ -169,20 +222,29 @@
         
         let gunMesh;
         let bullets = [];
+        let grenades = []; // Массив активных гранат
         let enemies = [];
         let turrets = []; 
+        let items = []; // Предметы
         let particles = [];
-        let obstacles = []; // Для коллизий
+        let obstacles = []; 
         
         let score = 1000; 
         let health = 100;
         let isGameOver = false;
         let isMouseDown = false;
         
+        // Гранаты
+        let grenadeCount = 3;
+        const MAX_GRENADES = 5;
+        let lastGrenadeTime = 0;
+        const GRENADE_REGEN_TIME = 10000; // 10 секунд на регенерацию
+        
         let wave = 1;
         let enemiesToSpawn = 0;
         let spawnTimer = 0;
         let bossActive = false;
+        let bossLevel = 0; 
 
         let currentWeaponKey = 'blaster';
         let ammo = WEAPONS.blaster.mag;
@@ -197,10 +259,13 @@
         const uiName = document.getElementById('ui-wname');
         const uiHp = document.getElementById('ui-hp');
         const uiScore = document.getElementById('ui-score');
+        const uiGrenades = document.getElementById('ui-grenades');
         const bossBar = document.getElementById('boss-hp-container');
         const bossFill = document.getElementById('boss-hp-fill');
-        const buildMsg = document.getElementById('build-msg');
-        const crosshair = document.getElementById('crosshair');
+        const upgradeMenu = document.getElementById('upgrade-menu');
+        const upTitle = document.getElementById('up-title');
+        const upCost = document.getElementById('up-cost');
+        const upDesc = document.getElementById('up-desc');
 
         init();
         animate();
@@ -265,7 +330,6 @@
             const grid = new THREE.GridHelper(300, 60, 0x0044ff, 0x222222);
             scene.add(grid);
 
-            // Препятствия с коллизиями
             const geo = new THREE.BoxGeometry(1,1,1);
             const mat = new THREE.MeshStandardMaterial({ color: 0x222244 });
             for(let i=0; i<40; i++) {
@@ -277,13 +341,11 @@
                 mesh.scale.set(w, h, d);
                 let x = (Math.random()-0.5) * 200;
                 let z = (Math.random()-0.5) * 200;
-                // Чистим центр
                 if(Math.abs(x) < 20 && Math.abs(z) < 20) { x += 30; z += 30; }
                 
                 mesh.position.set(x, h/2, z);
                 scene.add(mesh);
                 
-                // Создаем Box3 для физики
                 const box = new THREE.Box3().setFromObject(mesh);
                 obstacles.push(box);
             }
@@ -331,6 +393,7 @@
                 case 'Digit3': switchWeapon('flamethrower'); break;
                 case 'Digit4': switchWeapon('rocket'); break;
                 case 'Digit5': switchWeapon('turret_tool'); break;
+                case 'KeyG': throwGrenade(); break; // ГРАНATA
             }
         }
         function onKeyUp(e) {
@@ -351,69 +414,281 @@
             gunMesh.position.y = -0.5; 
         }
 
-        function placeTurret() {
+        // --- ЛОГИКА ГРАНАТ ---
+        function throwGrenade() {
+            if(grenadeCount <= 0) {
+                showMessage("NO GRENADES!");
+                return;
+            }
+            
+            grenadeCount--;
+            updateUI();
+
+            const now = performance.now();
+            lastGrenadeTime = now;
+
+            // Создаем модель гранаты
+            const geo = new THREE.SphereGeometry(0.2, 8, 8);
+            const mat = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x004400 });
+            const mesh = new THREE.Mesh(geo, mat);
+            
+            // Позиция броска (от игрока)
+            const startPos = controls.getObject().position.clone();
+            startPos.y -= 0.5; // Чуть ниже глаз
+            
+            // Вектор направления
+            const dir = new THREE.Vector3();
+            controls.getDirection(dir);
+            
+            mesh.position.copy(startPos).add(dir.clone().multiplyScalar(1));
+            
+            // Физика броска
+            const force = 25; // Сила броска вперед
+            const upForce = 10; // Подброс вверх
+            
+            mesh.userData = {
+                vel: dir.multiplyScalar(force).add(new THREE.Vector3(0, upForce, 0)),
+                spawnTime: now,
+                explodeTime: 2000, // 2 секунды до взрыва
+                bounced: false
+            };
+            
+            scene.add(mesh);
+            grenades.push(mesh);
+        }
+
+        function explodeGrenade(grenade) {
+            const pos = grenade.position;
+            
+            // Визуал взрыва
+            const light = new THREE.PointLight(0x00ff00, 10, 20);
+            light.position.copy(pos);
+            scene.add(light);
+            setTimeout(() => scene.remove(light), 100);
+            
+            createParticles(pos, 0x00ff00, 30);
+            
+            // Урон по области
+            const blastRadius = 12;
+            const damage = 500;
+            
+            enemies.forEach(e => {
+                const dist = e.position.distanceTo(pos);
+                if(dist < blastRadius) {
+                    // Наносим урон
+                    e.userData.hp -= damage;
+                    
+                    // Отбрасывание
+                    const pushDir = new THREE.Vector3().subVectors(e.position, pos).normalize();
+                    e.position.add(pushDir.multiplyScalar(5));
+                    
+                    if(e.userData.type === 'boss') bossFill.style.width = (e.userData.hp/e.userData.maxHp*100)+'%';
+                    
+                    // Проверка смерти
+                    if(e.userData.hp <= 0) {
+                        killEnemy(e);
+                    } else {
+                        // Мигание белым
+                        e.material.emissive.setHex(0xffffff);
+                        setTimeout(()=>e.material.emissive.setHex(0x330000), 50);
+                    }
+                }
+            });
+            
+            scene.remove(grenade);
+            grenades = grenades.filter(g => g !== grenade);
+        }
+
+        function killEnemy(e) {
+             score += e.userData.type === 'boss' ? 5000 * bossLevel : 50;
+                                
+            // Если это босс - спавним аптечку
+            if(e.userData.type === 'boss') {
+                spawnMedkit(e.position);
+                bossActive = false;
+                bossLevel = 0; 
+                bossBar.style.display = 'none';
+                createParticles(e.position, 0xff0000, 100);
+                showMessage("BOSS DEFEATED! MEDKIT DROPPED");
+            } else {
+                createParticles(e.position, 0xff0000, 10);
+            }
+            
+            scene.remove(e);
+            enemies = enemies.filter(en => en !== e);
+            updateUI();
+        }
+
+        // --- ЛОГИКА СТРОИТЕЛЬСТВА И УЛУЧШЕНИЯ ---
+        function handleToolClick() {
+            const raycaster = new THREE.Raycaster();
+            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+            const intersects = raycaster.intersectObjects(scene.children);
+
+            let clickedTurret = null;
+
+            for (let hit of intersects) {
+                let obj = hit.object;
+                while(obj.parent && obj.parent !== scene) {
+                    obj = obj.parent;
+                }
+                
+                const found = turrets.find(t => t.mesh === obj);
+                if(found) {
+                    clickedTurret = found;
+                    break;
+                }
+            }
+
+            if(clickedTurret) {
+                upgradeTurret(clickedTurret);
+            } else {
+                placeTurret(intersects);
+            }
+        }
+
+        function placeTurret(intersects) {
+            if(turrets.length >= MAX_TURRETS) {
+                showMessage("MAX TURRETS (" + MAX_TURRETS + ") REACHED!");
+                return;
+            }
+
             if(score < TURRET_COST) {
                 showMessage("Need " + TURRET_COST + " Points!");
                 return;
             }
 
-            const raycaster = new THREE.Raycaster();
-            raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
-            const intersects = raycaster.intersectObjects(scene.children);
-
             for (let i = 0; i < intersects.length; i++) {
                 const obj = intersects[i].object;
-                // Разрешаем ставить на пол или другие объекты, но не на врагов/пули
                 if(obj.geometry && (obj.geometry.type === 'PlaneGeometry' || obj.geometry.type === 'BoxGeometry')) {
                     const pos = intersects[i].point;
                     
-                    // Проверка, чтобы не ставить внутри стен
                     const testBox = new THREE.Box3().setFromCenterAndSize(pos, new THREE.Vector3(2,2,2));
                     let collides = false;
                     for(let obs of obstacles) {
                         if(obs.intersectsBox(testBox)) collides = true;
                     }
+                    for(let t of turrets) {
+                        if(t.mesh.position.distanceTo(pos) < 3) collides = true;
+                    }
                     if(collides) continue;
 
-                    const turretBase = new THREE.Mesh(
-                        new THREE.CylinderGeometry(0.5, 0.8, 1.5, 8),
-                        new THREE.MeshStandardMaterial({ color: 0x00aaaa })
-                    );
-                    turretBase.position.copy(pos);
-                    turretBase.position.y = 0.75;
-                    
-                    const turretHead = new THREE.Mesh(
-                        new THREE.BoxGeometry(0.6, 0.6, 1.2),
-                        new THREE.MeshStandardMaterial({ color: 0x00ffff })
-                    );
-                    turretHead.position.y = 1.0;
-                    turretBase.add(turretHead);
-                    
-                    const barrel = new THREE.Mesh(
-                        new THREE.CylinderGeometry(0.1, 0.1, 1.0),
-                        new THREE.MeshBasicMaterial({ color: 0xffff00 })
-                    );
-                    barrel.rotation.x = Math.PI/2;
-                    barrel.position.set(0, 0, 0.6);
-                    turretHead.add(barrel);
-
-                    scene.add(turretBase);
-                    
-                    turrets.push({
-                        mesh: turretBase,
-                        head: turretHead,
-                        hp: 200,
-                        maxHp: 200,
-                        cooldown: 0,
-                        range: 45
-                    });
-
+                    createTurretMesh(pos, 1);
                     score -= TURRET_COST;
                     updateUI();
-                    createParticles(pos, 0x00ff00, 10);
                     return;
                 }
             }
+        }
+
+        function createTurretMesh(pos, level) {
+            const turretGroup = new THREE.Group();
+            turretGroup.position.copy(pos);
+            turretGroup.position.y = 0.75;
+
+            let baseColor = 0x00aaaa;
+            let headColor = 0x00ffff;
+            let barrelColor = 0xffff00;
+            let barrelGeo = new THREE.CylinderGeometry(0.1, 0.1, 1.0);
+            let headGeo = new THREE.BoxGeometry(0.6, 0.6, 1.2);
+
+            if(level === 2) { headColor = 0x0088ff; barrelColor = 0x00ffff; }
+            if(level === 3) { headColor = 0xff4400; barrelColor = 0xffaa00; }
+            if(level === 4) {
+                baseColor = 0x333333; headColor = 0x222222; barrelColor = 0xff0000;
+                barrelGeo = new THREE.BoxGeometry(0.4, 0.4, 1.2);
+            }
+            if(level === 5) {
+                 baseColor = 0x444444; headColor = 0x111111; barrelColor = 0x00ffff;
+                 barrelGeo = new THREE.CylinderGeometry(0.2, 0.2, 1.0);
+            }
+            if(level === 6) {
+                baseColor = 0x111111; headColor = 0x000000; barrelColor = 0xff0000;
+                headGeo = new THREE.BoxGeometry(1.2, 0.8, 1.2);
+            }
+
+            const base = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.5, 0.8, 1.5, 8),
+                new THREE.MeshStandardMaterial({ color: baseColor })
+            );
+            base.position.y = 0; 
+            turretGroup.add(base);
+            
+            const head = new THREE.Mesh(headGeo, new THREE.MeshStandardMaterial({ color: headColor }));
+            head.position.y = 1.0;
+            turretGroup.add(head);
+            
+            if(level === 6) {
+                const positions = [
+                    {x: -0.3, y: 0.2}, {x: 0.3, y: 0.2},
+                    {x: -0.3, y: -0.2}, {x: 0.3, y: -0.2}
+                ];
+                positions.forEach(p => {
+                    const b = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.25, 1.0), new THREE.MeshBasicMaterial({color: barrelColor}));
+                    b.rotation.x = Math.PI/2;
+                    b.position.set(p.x, p.y, 0.5);
+                    head.add(b);
+                });
+            } else {
+                const barrel = new THREE.Mesh(barrelGeo, new THREE.MeshBasicMaterial({ color: barrelColor }));
+                barrel.rotation.x = Math.PI/2;
+                barrel.position.set(0, 0, 0.6);
+                head.add(barrel);
+            }
+
+            scene.add(turretGroup);
+            
+            const turretData = {
+                mesh: turretGroup,
+                head: head,
+                level: level,
+                hp: 200 * level,
+                maxHp: 200 * level,
+                cooldown: 0,
+                range: 60
+            };
+            
+            updateTurretStats(turretData);
+            turrets.push(turretData);
+            createParticles(pos, 0x00ff00, 10);
+        }
+
+        function updateTurretStats(t) {
+            if(t.level === 1) { t.fireRate = 0.4; t.damage = 10; t.type = 'normal'; }
+            else if (t.level === 2) { t.fireRate = 0.15; t.damage = 15; t.type = 'normal'; }
+            else if (t.level === 3) { t.fireRate = 0.1; t.damage = 5; t.type = 'fire'; }
+            else if (t.level === 4) { t.fireRate = 1.2; t.damage = 100; t.type = 'rocket'; }
+            else if (t.level === 5) { t.fireRate = 0.05; t.damage = 8; t.type = 'normal'; }
+            else if (t.level === 6) { t.fireRate = 1.5; t.damage = 150; t.type = 'quad_rocket'; }
+        }
+
+        function upgradeTurret(t) {
+            const nextLevel = t.level + 1;
+            let cost = 0;
+            if(nextLevel === 2) cost = UPGRADE_LV2_COST;
+            if(nextLevel === 3) cost = UPGRADE_LV3_COST;
+            if(nextLevel === 4) cost = UPGRADE_LV4_COST;
+            if(nextLevel === 5) cost = UPGRADE_LV5_COST;
+            if(nextLevel === 6) cost = UPGRADE_LV6_COST;
+
+            if(t.level >= 6) {
+                showMessage("MAX LEVEL REACHED");
+                return;
+            }
+
+            if(score < cost) {
+                showMessage(`Need ${cost} Points!`);
+                return;
+            }
+
+            score -= cost;
+            const pos = t.mesh.position.clone();
+            scene.remove(t.mesh);
+            turrets = turrets.filter(existing => existing !== t);
+            createTurretMesh(pos, nextLevel);
+            createParticles(pos, 0xffff00, 20);
+            showMessage("UPGRADED TO LEVEL " + nextLevel);
+            updateUI();
         }
 
         function shoot() {
@@ -427,8 +702,6 @@
             if(w.type !== 'tool') {
                 ammo--;
                 updateUI();
-                
-                // Отдача
                 gunMesh.position.z += 0.15;
                 gunMesh.rotation.x += 0.15;
                 crosshair.classList.add('shooting');
@@ -436,7 +709,7 @@
             }
 
             if(w.type === 'tool') {
-                placeTurret();
+                handleToolClick();
                 return;
             }
 
@@ -459,7 +732,6 @@
 
             const dir = new THREE.Vector3();
             camera.getWorldDirection(dir);
-            // Разброс
             dir.x += (Math.random()-0.5)*w.spread;
             dir.y += (Math.random()-0.5)*w.spread;
             dir.z += (Math.random()-0.5)*w.spread;
@@ -472,7 +744,7 @@
 
         function startWave() {
             if(bossActive) return;
-            if(wave === BOSS_WAVE_NUM) {
+            if(wave > 1 && wave % BOSS_INTERVAL === 0) {
                 spawnBoss();
             } else {
                 enemiesToSpawn = ENEMIES_PER_WAVE + (wave * 2);
@@ -497,7 +769,7 @@
             e.userData = { 
                 hp: 20 * hpMult, 
                 maxHp: 20 * hpMult,
-                dmg: 5 + wave, 
+                dmg: (5 + wave) * 1.3,
                 type: 'normal' 
             };
             scene.add(e);
@@ -506,18 +778,53 @@
 
         function spawnBoss() {
             bossActive = true;
+            bossLevel++; 
             bossBar.style.display = 'block';
-            uiWave.innerText = "WARNING: BOSS";
+            uiWave.innerText = `BOSS LEVEL ${bossLevel}`;
+            uiWave.style.color = "#ff0000";
             
+            const baseHp = 5000;
+            const hpScale = Math.pow(1.6, bossLevel - 1); 
+            const baseDmg = 25;
+            const dmgScale = Math.pow(1.3, bossLevel - 1);
+            const baseSpeed = 10;
+            const speedScale = 1 + (bossLevel * 0.1);
+
             const boss = new THREE.Mesh(
                 new THREE.BoxGeometry(8, 8, 8),
                 new THREE.MeshStandardMaterial({ color: 0xaa0000, emissive: 0x550000 })
             );
             boss.position.set(0, 4, -80);
-            boss.userData = { hp: 5000, maxHp: 5000, dmg: 20, type: 'boss' };
-            
+            boss.userData = { 
+                hp: baseHp * hpScale, 
+                maxHp: baseHp * hpScale, 
+                dmg: baseDmg * dmgScale, 
+                speed: baseSpeed * speedScale,
+                type: 'boss',
+                stuckTimer: 0,
+                lastPos: new THREE.Vector3(0,4,-80)
+            };
             scene.add(boss);
             enemies.push(boss);
+        }
+
+        function spawnMedkit(position) {
+            const geometry = new THREE.BoxGeometry(1.5, 1.5, 1.5);
+            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+            const medkit = new THREE.Mesh(geometry, material);
+            medkit.position.copy(position);
+            medkit.position.y = 1.5;
+            
+            const crossGeo = new THREE.BoxGeometry(0.5, 0.5, 1.6);
+            const crossMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            const crossH = new THREE.Mesh(crossGeo, crossMat);
+            medkit.add(crossH);
+            const crossV = new THREE.Mesh(crossGeo, crossMat);
+            crossV.rotation.z = Math.PI/2;
+            medkit.add(crossV);
+
+            scene.add(medkit);
+            items.push({ mesh: medkit, type: 'medkit', heal: 50 });
         }
 
         function showMessage(text) {
@@ -544,7 +851,7 @@
                 );
                 p.position.copy(pos);
                 p.userData = {
-                    vel: new THREE.Vector3((Math.random()-0.5)*5, Math.random()*5, (Math.random()-0.5)*5),
+                    vel: new THREE.Vector3((Math.random()-0.5)*10, (Math.random()-0.5)*10, (Math.random()-0.5)*10),
                     life: 1.0
                 };
                 scene.add(p);
@@ -562,22 +869,21 @@
         }
 
         function updateUI() {
-            uiAmmo.innerText = currentWeaponKey === 'turret_tool' ? "∞" : Math.floor(ammo);
+            uiAmmo.innerText = currentWeaponKey === 'turret_tool' ? `${turrets.length}/${MAX_TURRETS}` : Math.floor(ammo);
+            uiGrenades.innerText = grenadeCount;
             uiName.innerText = WEAPONS[currentWeaponKey].name;
             uiScore.innerText = score;
             uiHp.style.width = Math.max(0, health) + '%';
             uiHp.style.backgroundColor = health > 50 ? '#0f0' : '#f00';
             
             const totalEnemies = enemies.length + enemiesToSpawn;
-            uiEnemiesLeft.innerText = bossActive ? "BOSS FIGHT" : totalEnemies;
+            uiEnemiesLeft.innerText = bossActive ? `BOSS LVL ${bossLevel}` : totalEnemies;
 
             for(let i=1; i<=5; i++) {
                 const el = document.getElementById(`slot-${i}`);
                 const key = Object.keys(WEAPONS).find(k => WEAPONS[k].id === i);
                 if(key) el.classList.toggle('active', currentWeaponKey === key);
             }
-            
-            buildMsg.style.display = currentWeaponKey === 'turret_tool' ? 'block' : 'none';
         }
 
         function gameOver() {
@@ -591,17 +897,20 @@
 
         function resetGame() {
             isGameOver = false; health = 100; score = 1000; wave = 1;
-            bossActive = false; bossBar.style.display = 'none';
+            bossActive = false; bossLevel = 0; bossBar.style.display = 'none';
             enemiesToSpawn = 0;
             currentWeaponKey = 'blaster'; ammo = WEAPONS.blaster.mag;
             isReloading = false;
+            grenadeCount = 3;
             
             enemies.forEach(e => scene.remove(e));
             bullets.forEach(b => scene.remove(b));
+            grenades.forEach(g => scene.remove(g));
             turrets.forEach(t => scene.remove(t.mesh));
+            items.forEach(i => scene.remove(i.mesh));
             particles.forEach(p => scene.remove(p));
             
-            enemies = []; bullets = []; turrets = []; particles = [];
+            enemies = []; bullets = []; grenades = []; turrets = []; items = []; particles = [];
             
             controls.getObject().position.set(0, 1.6, 0);
             startWave();
@@ -623,8 +932,16 @@
             const delta = (time - prevTime) / 1000;
             prevTime = time;
 
+            upgradeMenu.style.display = 'none';
+
             if(controls.isLocked && !isGameOver) {
-                // Перезарядка
+                // Регенерация гранат
+                if(grenadeCount < MAX_GRENADES && time - lastGrenadeTime > GRENADE_REGEN_TIME) {
+                    grenadeCount++;
+                    lastGrenadeTime = time; // Сброс таймера для следующей
+                    updateUI();
+                }
+
                 if(isReloading && time >= reloadEndTime) {
                     isReloading = false;
                     ammo = WEAPONS[currentWeaponKey].mag;
@@ -632,12 +949,11 @@
                     updateUI();
                 }
 
-                // Стрельба
                 if(isMouseDown) {
                     if(WEAPONS[currentWeaponKey].auto || WEAPONS[currentWeaponKey].type === 'tool') shoot();
                 }
 
-                // Физика игрока и Коллизии
+                // Физика игрока
                 velocity.x -= velocity.x * 10.0 * delta;
                 velocity.z -= velocity.z * 10.0 * delta;
                 velocity.y -= 20.0 * delta;
@@ -648,17 +964,14 @@
                 if(moveF || moveB) velocity.z -= direction.z * 400.0 * delta;
                 if(moveL || moveR) velocity.x -= direction.x * 400.0 * delta;
 
-                // Предсказание позиции для коллизий
                 const oldPos = controls.getObject().position.clone();
                 
                 controls.moveRight(-velocity.x * delta);
                 controls.moveForward(-velocity.z * delta);
                 
-                // Проверка коллизий со стенами
                 const playerBox = new THREE.Box3().setFromCenterAndSize(controls.getObject().position, new THREE.Vector3(1, 2, 1));
                 for(let obs of obstacles) {
                     if(obs.intersectsBox(playerBox)) {
-                        // Откат позиции при столкновении
                         controls.getObject().position.copy(oldPos);
                         velocity.x = 0;
                         velocity.z = 0;
@@ -673,56 +986,152 @@
                     canJump = true;
                 }
 
-                // Возврат оружия
                 if(gunMesh.visible) {
                     gunMesh.position.lerp(new THREE.Vector3(0.25, isReloading?-0.5:-0.25, -0.4), 0.1);
                     gunMesh.rotation.x = THREE.MathUtils.lerp(gunMesh.rotation.x, 0, 0.1);
                 }
 
-                // Логика Турелей
-                turrets.forEach((t, idx) => {
+                // --- ФИЗИКА ГРАНАТ ---
+                for(let i=grenades.length-1; i>=0; i--) {
+                    const g = grenades[i];
+                    const age = time - g.userData.spawnTime;
+                    
+                    // Гравитация
+                    g.userData.vel.y -= 20.0 * delta;
+                    g.position.addScaledVector(g.userData.vel, delta);
+                    
+                    // Отскок от пола
+                    if(g.position.y < 0.2) {
+                        g.position.y = 0.2;
+                        g.userData.vel.y *= -0.5; // Теряем энергию
+                        g.userData.vel.x *= 0.8;  // Трение
+                        g.userData.vel.z *= 0.8;
+                    }
+                    
+                    // Взрыв по времени или если застряла
+                    if(age > g.userData.explodeTime) {
+                        explodeGrenade(g);
+                    }
+                }
+
+                // --- ПРЕДМЕТЫ (АПТЕЧКИ) ---
+                for(let i=items.length-1; i>=0; i--) {
+                    const item = items[i];
+                    item.mesh.rotation.y += delta;
+                    item.mesh.rotation.z = Math.sin(time * 0.005) * 0.2;
+                    
+                    if(item.mesh.position.distanceTo(controls.getObject().position) < 3) {
+                        if(item.type === 'medkit') {
+                            health = Math.min(100, health + item.heal);
+                            showMessage("MEDKIT USED: +" + item.heal + " HP");
+                            createParticles(item.mesh.position, 0x00ff00, 10);
+                            updateUI();
+                        }
+                        scene.remove(item.mesh);
+                        items.splice(i, 1);
+                    }
+                }
+
+                // --- ЛОГИКА ТУРЕЛЕЙ ---
+                turrets.forEach((t) => {
                     let target = null;
                     let minDist = t.range;
-                    
-                    // Ищем ближайшего врага
                     enemies.forEach(e => {
                         const d = t.mesh.position.distanceTo(e.position);
-                        if(d < minDist) {
-                            minDist = d;
-                            target = e;
-                        }
+                        if(d < minDist) { minDist = d; target = e; }
                     });
 
                     if(target) {
                         t.head.lookAt(target.position);
-                        
                         if(t.cooldown <= 0) {
-                            t.cooldown = 0.15; 
+                            t.cooldown = t.fireRate; 
                             
-                            const b = new THREE.Mesh(new THREE.SphereGeometry(0.1), new THREE.MeshBasicMaterial({color:0x00ff00}));
-                            b.position.copy(t.head.position);
-                            b.position.y += 1.0; 
-                            
+                            let bulletType = 'bullet';
+                            let bulletColor = 0x00ff00;
+                            let bulletGeo, bulletMat;
+
+                            if(t.level === 6) {
+                                bulletType = 'rocket';
+                                bulletColor = 0xff0000;
+                                bulletGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.8);
+                                bulletMat = new THREE.MeshStandardMaterial({color:0x333});
+                                const offsets = [-0.15, -0.05, 0.05, 0.15];
+                                offsets.forEach(off => {
+                                    const b = new THREE.Mesh(bulletGeo, bulletMat);
+                                    b.rotation.x = Math.PI/2;
+                                    const muzzlePos = new THREE.Vector3(off, 0, 0.8);
+                                    muzzlePos.applyMatrix4(t.head.matrixWorld);
+                                    b.position.copy(muzzlePos);
+                                    const dir = new THREE.Vector3();
+                                    dir.subVectors(target.position, b.position).normalize();
+                                    dir.x += off * 0.1; 
+                                    b.userData = { vel: dir.multiplyScalar(50), dmg: t.damage, isTurretBullet: true, type: 'rocket' };
+                                    scene.add(b); bullets.push(b);
+                                });
+                                return;
+                            } else if(t.level === 5) {
+                                bulletGeo = new THREE.SphereGeometry(0.15); bulletMat = new THREE.MeshBasicMaterial({color:0x00ffff});
+                            } else if(t.level === 4) {
+                                bulletGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.8); bulletMat = new THREE.MeshStandardMaterial({color:0x333});
+                                bulletType = 'rocket';
+                            } else if(t.level === 3) {
+                                bulletGeo = new THREE.SphereGeometry(0.2); bulletMat = new THREE.MeshBasicMaterial({color:0xffaa00});
+                                bulletType = 'fire';
+                            } else if (t.level === 2) {
+                                bulletGeo = new THREE.SphereGeometry(0.08); bulletMat = new THREE.MeshBasicMaterial({color:0x0088ff});
+                            } else {
+                                bulletGeo = new THREE.SphereGeometry(0.1); bulletMat = new THREE.MeshBasicMaterial({color:0x00ff00});
+                            }
+
+                            const muzzlePos = new THREE.Vector3(0, 0, 0.6);
+                            muzzlePos.applyMatrix4(t.head.matrixWorld);
+                            const b = new THREE.Mesh(bulletGeo, bulletMat);
+                            b.position.copy(muzzlePos);
                             const dir = new THREE.Vector3();
                             dir.subVectors(target.position, b.position).normalize();
-                            b.userData = { vel: dir.multiplyScalar(100), dmg: 10, isTurretBullet: true };
-                            
-                            scene.add(b);
-                            bullets.push(b);
+                            if(t.level === 3) {
+                                dir.x += (Math.random()-0.5)*0.2; dir.y += (Math.random()-0.5)*0.2; dir.z += (Math.random()-0.5)*0.2;
+                            }
+                            b.userData = { vel: dir.multiplyScalar(t.level === 4 ? 50 : 100), dmg: t.damage, isTurretBullet: true, type: bulletType };
+                            scene.add(b); bullets.push(b);
                         }
                     }
                     if(t.cooldown > 0) t.cooldown -= delta;
                 });
 
+                // Raycast для меню улучшения
+                if(currentWeaponKey === 'turret_tool') {
+                    const raycaster = new THREE.Raycaster();
+                    raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+                    const intersects = raycaster.intersectObjects(scene.children);
+                    for (let hit of intersects) {
+                        let obj = hit.object;
+                        while(obj.parent && obj.parent !== scene) obj = obj.parent;
+                        const found = turrets.find(t => t.mesh === obj);
+                        if(found && hit.distance < 15) { 
+                            const nextLv = found.level + 1;
+                            if(nextLv <= 6) {
+                                upgradeMenu.style.display = 'block';
+                                let cost = 0, desc = "";
+                                if(nextLv === 2) { cost = UPGRADE_LV2_COST; desc = "Next: Rapid Fire"; }
+                                if(nextLv === 3) { cost = UPGRADE_LV3_COST; desc = "Next: FLAMETHROWER"; }
+                                if(nextLv === 4) { cost = UPGRADE_LV4_COST; desc = "Next: ROCKET"; }
+                                if(nextLv === 5) { cost = UPGRADE_LV5_COST; desc = "Next: PLASMA BEAM"; }
+                                if(nextLv === 6) { cost = UPGRADE_LV6_COST; desc = "Next: QUAD MISSILE POD"; }
+                                upTitle.innerText = `UPGRADE TO LVL ${nextLv}`;
+                                upCost.innerText = `COST: ${cost}`;
+                                upDesc.innerText = desc;
+                                upCost.style.color = score >= cost ? '#ff0' : '#f00';
+                            }
+                            break;
+                        }
+                    }
+                }
+
                 // Спавн врагов
                 if(!bossActive && enemiesToSpawn > 0) {
                     spawnTimer += delta;
-                    if(spawnTimer > 0.8) { 
-                        spawnEnemy();
-                        enemiesToSpawn--;
-                        spawnTimer = 0;
-                        updateUI();
-                    }
+                    if(spawnTimer > 0.8) { spawnEnemy(); enemiesToSpawn--; spawnTimer = 0; updateUI(); }
                 } else if (!bossActive && enemies.length === 0) {
                     wave++;
                     startWave();
@@ -732,21 +1141,16 @@
                 for(let i=particles.length-1; i>=0; i--) {
                     const p = particles[i];
                     p.position.addScaledVector(p.userData.vel, delta);
-                    p.userData.vel.y -= 9.8 * delta; // Гравитация
+                    p.userData.vel.y -= 9.8 * delta; 
                     p.userData.life -= delta * 2;
                     p.scale.setScalar(p.userData.life);
-                    
-                    if(p.userData.life <= 0) {
-                        scene.remove(p);
-                        particles.splice(i,1);
-                    }
+                    if(p.userData.life <= 0) { scene.remove(p); particles.splice(i,1); }
                 }
 
                 // Пули
                 for(let i=bullets.length-1; i>=0; i--) {
                     const b = bullets[i];
                     b.position.addScaledVector(b.userData.vel, delta);
-                    
                     if(b.position.distanceTo(controls.getObject().position) > 200 || (b.userData.life !== undefined && (b.userData.life -= delta) <= 0)) {
                         scene.remove(b); bullets.splice(i,1); continue;
                     }
@@ -755,17 +1159,15 @@
                     for(let j=enemies.length-1; j>=0; j--) {
                         const e = enemies[j];
                         const distLimit = e.userData.type === 'boss' ? 5.0 : 1.5;
-                        
                         if(b.position.distanceTo(e.position) < distLimit) {
                             hit = true;
-                            createParticles(b.position, b.material.color, 3);
+                            createParticles(b.position, b.userData.type === 'fire' ? 0xffaa00 : (b.userData.type === 'rocket' ? 0xff0000 : b.material.color), 3);
 
                             if(b.userData.type === 'rocket') {
                                 const exp = new THREE.PointLight(0xffaa00, 5, 15);
                                 exp.position.copy(b.position); scene.add(exp);
                                 setTimeout(()=>scene.remove(exp), 100);
                                 createParticles(b.position, 0xffaa00, 20);
-                                
                                 enemies.forEach(near => {
                                     if(near.position.distanceTo(b.position) < 10) {
                                         near.userData.hp -= b.userData.dmg;
@@ -775,66 +1177,67 @@
                             } else {
                                 e.userData.hp -= (b.userData.dmg || 1);
                                 if(e.userData.type === 'boss') bossFill.style.width = (e.userData.hp/e.userData.maxHp*100)+'%';
-                                
                                 e.material.emissive.setHex(0xffffff);
                                 setTimeout(()=>e.material.emissive.setHex(e.userData.type==='boss'?0x550000:0x330000), 50);
                             }
                             
-                            if(e.userData.hp <= 0) {
-                                score += e.userData.type === 'boss' ? 5000 : 50;
-                                if(e.userData.type === 'boss') {
-                                    bossActive = false;
-                                    bossBar.style.display = 'none';
-                                    health = Math.min(100, health + 50);
-                                    createParticles(e.position, 0xff0000, 50);
-                                }
-                                scene.remove(e);
-                                enemies.splice(j, 1);
-                                updateUI();
-                            }
+                            if(e.userData.hp <= 0) killEnemy(e);
                             break;
                         }
                     }
                     if(hit && b.userData.type !== 'fire') { scene.remove(b); bullets.splice(i,1); }
                 }
 
-                // Враги атакуют игрока И ТУРЕЛИ
+                // Враги
                 const pPos = controls.getObject().position;
                 enemies.forEach(e => {
-                    // Находим ближайшую цель (Игрок или Турель)
                     let targetPos = pPos;
                     let minDst = e.position.distanceTo(pPos);
-                    
                     let targetTurret = null;
                     turrets.forEach(t => {
                         const d = e.position.distanceTo(t.mesh.position);
-                        if(d < minDst) {
-                            minDst = d;
-                            targetTurret = t;
-                            targetPos = t.mesh.position;
-                        }
+                        if(d < minDst) { minDst = d; targetTurret = t; targetPos = t.mesh.position; }
                     });
 
                     e.lookAt(targetPos.x, e.position.y, targetPos.z);
-                    const speed = e.userData.type === 'boss' ? 15 : (8 + wave*0.5);
-                    e.translateZ(speed * delta);
                     
-                    const distLimit = e.userData.type === 'boss' ? 5.0 : 1.5;
+                    if(e.userData.type === 'boss') {
+                        e.translateZ(e.userData.speed * delta);
+                        if(e.position.distanceTo(e.userData.lastPos) < 1) {
+                            e.userData.stuckTimer += delta;
+                            if(e.userData.stuckTimer > 1.5) {
+                                const dirToPlayer = new THREE.Vector3().subVectors(pPos, e.position).normalize();
+                                e.position.add(dirToPlayer.multiplyScalar(10));
+                                e.userData.stuckTimer = 0;
+                            }
+                        } else { e.userData.stuckTimer = 0; }
+                        e.userData.lastPos.copy(e.position);
+                        if(e.userData.hp < e.userData.maxHp * 0.3) {
+                             e.material.emissive.setHex(0xff0000); 
+                             e.scale.setScalar(1 + Math.sin(time * 0.01)*0.1); 
+                        }
+                    } else {
+                        e.translateZ((8 + wave*0.5) * delta);
+                    }
                     
-                    // Атака игрока
+                    const distLimit = e.userData.type === 'boss' ? 6.0 : 1.5;
                     if(e.position.distanceTo(pPos) < distLimit) takeDamage(e.userData.dmg * delta);
                     
-                    // Атака турели
                     if(targetTurret && e.position.distanceTo(targetTurret.mesh.position) < distLimit) {
                         targetTurret.hp -= e.userData.dmg * delta;
-                        // Визуализация повреждения турели
-                        targetTurret.mesh.material.color.setHex(0xff0000);
-                        setTimeout(() => targetTurret.mesh.material.color.setHex(0x00aaaa), 50);
-
+                        let baseCol = 0x00aaaa;
+                        if(targetTurret.level === 2) baseCol = 0x0088ff;
+                        if(targetTurret.level === 3) baseCol = 0xff4400;
+                        if(targetTurret.level === 4) baseCol = 0x333333;
+                        if(targetTurret.level === 5) baseCol = 0x444444;
+                        if(targetTurret.level === 6) baseCol = 0x111111;
+                        targetTurret.mesh.children[0].material.color.setHex(0xff0000);
+                        setTimeout(() => { if(targetTurret) targetTurret.mesh.children[0].material.color.setHex(baseCol); }, 50);
                         if(targetTurret.hp <= 0) {
-                            createParticles(targetTurret.mesh.position, 0x00aaaa, 15);
+                            createParticles(targetTurret.mesh.position, baseCol, 15);
                             scene.remove(targetTurret.mesh);
                             turrets = turrets.filter(t => t !== targetTurret);
+                            updateUI();
                         }
                     }
                 });
