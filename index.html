@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Neon Shooter: Grenades</title>
+    <title>Neon Shooter: Synthwave Edition</title>
     <style>
         body { margin: 0; overflow: hidden; font-family: 'Segoe UI', sans-serif; user-select: none; background: #000; }
         
@@ -51,7 +51,6 @@
         }
         .slot.active { border-color: #0f0; color: #0f0; background: rgba(0,255,0,0.2); box-shadow: 0 0 5px #0f0; }
 
-        /* Панель гранат */
         .grenade-panel {
             margin-top: 10px;
             display: flex;
@@ -102,7 +101,6 @@
             pointer-events: none; transition: 0.1s; z-index: 5;
         }
         
-        /* Меню улучшения */
         #upgrade-menu {
             position: absolute; top: 50%; left: 50%;
             transform: translate(-50%, -50%);
@@ -120,6 +118,21 @@
         .up-cost { font-size: 24px; color: #ff0; margin-bottom: 5px; }
         .up-desc { font-size: 14px; color: #ccc; }
 
+        #escape-msg {
+            position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%);
+            color: #0ff; font-size: 24px; font-weight: bold;
+            text-shadow: 0 0 10px #0ff; display: none; z-index: 9;
+            text-align: center;
+        }
+        
+        #mute-btn {
+            position: absolute; top: 10px; right: 10px;
+            background: rgba(0,0,0,0.5); border: 1px solid #0f0;
+            color: #0f0; padding: 5px 10px; cursor: pointer;
+            font-family: monospace; z-index: 30;
+        }
+        #mute-btn:hover { background: #0f0; color: #000; }
+
     </style>
     <script type="importmap">
         {
@@ -134,8 +147,8 @@
 
     <div id="crosshair"></div>
     <div id="damage-overlay"></div>
+    <div id="escape-msg">КОСМИЧЕСКИЙ ТРАНСПОРТ ПРИБЫЛ<br><span style="font-size:16px; color:#fff">Нажми [E] чтобы улететь на победу</span></div>
     
-    <!-- Меню улучшения -->
     <div id="upgrade-menu">
         <div class="up-title" id="up-title">UPGRADE TURRET</div>
         <div class="up-cost" id="up-cost">COST: 1000</div>
@@ -161,7 +174,6 @@
                 <div class="slot" id="slot-5" style="color:#0ff">5</div>
             </div>
             
-            <!-- Индикатор гранат -->
             <div class="grenade-panel">
                 <div class="grenade-icon"></div>
                 <div>
@@ -176,13 +188,15 @@
         </div>
     </div>
 
+    <button id="mute-btn">MUTE MUSIC [M]</button>
+
     <div id="blocker">
         <div class="menu-box">
             <h1>NEON DEFENSE</h1>
             <p style="color:#aaa; margin-bottom: 20px;">
-                [G] Бросить гранату<br>
-                [5] Строить / Улучшать турели<br>
-                Lvl6: QUAD ROCKET (15k)
+                [WASD] Move &nbsp; [MOUSE] Shoot<br>
+                [G] Grenade &nbsp; [5] Build Turret<br>
+                [M] Toggle Music
             </p>
             <button class="start-btn" id="start-btn">НАЧАТЬ</button>
         </div>
@@ -192,13 +206,116 @@
         import * as THREE from 'three';
         import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 
-        // --- КОНФИГУРАЦИЯ ---
+        // --- AUDIO SYSTEM (Procedural Synthwave) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let isMuted = false;
+        let musicInterval = null;
+        let musicNoteIndex = 0;
+        
+        // Synthwave Bassline Notes (Frequency in Hz)
+        const bassLine = [65.41, 65.41, 77.78, 65.41, 58.27, 58.27, 51.91, 58.27]; // C2, Eb2, Bb1
+        
+        function playTone(freq, type, duration, vol=0.1, slideTo=null) {
+            if(isMuted || !audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            if(slideTo) {
+                osc.frequency.exponentialRampToValueAtTime(slideTo, audioCtx.currentTime + duration);
+            }
+            
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playNoise(duration, vol=0.2) {
+            if(isMuted || !audioCtx) return;
+            const bufferSize = audioCtx.sampleRate * duration;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                data[i] = Math.random() * 2 - 1;
+            }
+            
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const gain = audioCtx.createGain();
+            
+            // Lowpass filter for explosion thud
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'lowpass';
+            filter.frequency.value = 1000;
+
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            noise.connect(filter);
+            filter.connect(gain);
+            gain.connect(audioCtx.destination);
+            noise.start();
+        }
+
+        function startMusic() {
+            if(musicInterval) clearInterval(musicInterval);
+            // 120 BPM = 500ms per beat -> 250ms for 8th notes
+            musicInterval = setInterval(() => {
+                if(!isMuted && controls.isLocked && !isGameOver && !gameWon) {
+                    // Bass
+                    playTone(bassLine[musicNoteIndex % 8], 'sawtooth', 0.2, 0.15);
+                    
+                    // Arpeggio every off-beat
+                    if(musicNoteIndex % 2 !== 0) {
+                         playTone(400 + (musicNoteIndex%4)*100, 'square', 0.1, 0.05);
+                    }
+                    
+                    // Boss Mode Intensifier
+                    if(bossActive && musicNoteIndex % 4 === 0) {
+                        playTone(150, 'sawtooth', 0.1, 0.2);
+                    }
+                    
+                    musicNoteIndex++;
+                }
+            }, 250);
+        }
+
+        function stopMusic() {
+            if(musicInterval) clearInterval(musicInterval);
+        }
+
+        // SFX Wrappers
+        const SFX = {
+            shoot: (type) => {
+                if(type === 'rocket') playNoise(0.5, 0.3);
+                else if(type === 'fire') playNoise(0.1, 0.1);
+                else playTone(800, 'triangle', 0.1, 0.1, 100);
+            },
+            explode: () => playNoise(0.6, 0.4),
+            hit: () => playTone(200, 'sawtooth', 0.05, 0.1),
+            build: () => playTone(600, 'sine', 0.3, 0.2, 1200),
+            upgrade: () => { playTone(400, 'square', 0.1, 0.2); setTimeout(()=>playTone(600, 'square', 0.1, 0.2), 100); setTimeout(()=>playTone(800, 'square', 0.2, 0.2), 200); },
+            empty: () => playTone(800, 'square', 0.05, 0.05),
+            medkit: () => playTone(1000, 'sine', 0.5, 0.2, 2000)
+        };
+
+        document.getElementById('mute-btn').addEventListener('click', () => {
+            isMuted = !isMuted;
+            document.getElementById('mute-btn').innerText = isMuted ? "UNMUTE [M]" : "MUTE MUSIC [M]";
+            if(isMuted) stopMusic(); else startMusic();
+        });
+
+        // --- GAME CONFIGURATION ---
         const ENEMIES_PER_WAVE = 20;
         const BOSS_INTERVAL = 5; 
         const TURRET_COST = 200;
         const MAX_TURRETS = 5; 
         
-        // Цены улучшений
         const UPGRADE_LV2_COST = 1000;
         const UPGRADE_LV3_COST = 2500;
         const UPGRADE_LV4_COST = 5000;
@@ -213,7 +330,7 @@
             turret_tool: { id: 5, name: "Builder / Upgrader", damage: 0, rate: 500, mag: 1, reload: 0, color: 0x00ff00, speed: 0, spread: 0, auto: false, type: 'tool' }
         };
 
-        // --- ПЕРЕМЕННЫЕ ---
+        // --- VARIABLES ---
         let camera, scene, renderer, controls;
         let moveF=false, moveB=false, moveL=false, moveR=false;
         let prevTime = performance.now();
@@ -222,10 +339,10 @@
         
         let gunMesh;
         let bullets = [];
-        let grenades = []; // Массив активных гранат
+        let grenades = []; 
         let enemies = [];
         let turrets = []; 
-        let items = []; // Предметы
+        let items = []; 
         let particles = [];
         let obstacles = []; 
         
@@ -234,17 +351,22 @@
         let isGameOver = false;
         let isMouseDown = false;
         
-        // Гранаты
         let grenadeCount = 3;
         const MAX_GRENADES = 5;
         let lastGrenadeTime = 0;
-        const GRENADE_REGEN_TIME = 10000; // 10 секунд на регенерацию
+        const GRENADE_REGEN_TIME = 10000;
         
         let wave = 1;
         let enemiesToSpawn = 0;
         let spawnTimer = 0;
         let bossActive = false;
         let bossLevel = 0; 
+
+        // ESCAPE LOGIC
+        let escapeShip = null;
+        let escapeZoneRadius = 15;
+        let isInEscapeZone = false;
+        let gameWon = false;
 
         let currentWeaponKey = 'blaster';
         let ammo = WEAPONS.blaster.mag;
@@ -266,6 +388,7 @@
         const upTitle = document.getElementById('up-title');
         const upCost = document.getElementById('up-cost');
         const upDesc = document.getElementById('up-desc');
+        const escapeMsg = document.getElementById('escape-msg');
 
         init();
         animate();
@@ -287,15 +410,20 @@
             const startBtn = document.getElementById('start-btn');
 
             startBtn.addEventListener('click', () => {
-                if(!isGameOver) controls.lock();
+                // Init Audio Context on first user interaction
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                
+                if(!isGameOver && !gameWon) controls.lock();
                 else resetGame();
             });
 
             controls.addEventListener('lock', () => {
                 blocker.style.display = 'none';
+                startMusic();
             });
             controls.addEventListener('unlock', () => {
-                if(!isGameOver) {
+                stopMusic();
+                if(!isGameOver && !gameWon) {
                     blocker.style.display = 'flex';
                     startBtn.innerText = "ПРОДОЛЖИТЬ";
                 }
@@ -393,7 +521,13 @@
                 case 'Digit3': switchWeapon('flamethrower'); break;
                 case 'Digit4': switchWeapon('rocket'); break;
                 case 'Digit5': switchWeapon('turret_tool'); break;
-                case 'KeyG': throwGrenade(); break; // ГРАНATA
+                case 'KeyG': throwGrenade(); break;
+                case 'KeyE': tryEscape(); break;
+                case 'KeyM': 
+                    isMuted = !isMuted; 
+                    document.getElementById('mute-btn').innerText = isMuted ? "UNMUTE [M]" : "MUTE MUSIC [M]";
+                    if(isMuted) stopMusic(); else startMusic();
+                    break;
             }
         }
         function onKeyUp(e) {
@@ -412,44 +546,123 @@
             isReloading = true;
             reloadEndTime = performance.now() + w.reload;
             gunMesh.position.y = -0.5; 
+            SFX.empty();
         }
 
-        // --- ЛОГИКА ГРАНАТ ---
+        // --- LOGIC: ESCAPE ---
+        function spawnEscapeShip() {
+            showMessage("ESCAPE SHIP ARRIVING!");
+            SFX.build(); // Reuse build sound for arrival
+            
+            escapeShip = new THREE.Group();
+            
+            const bodyGeo = new THREE.CylinderGeometry(2, 8, 20, 8);
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4 });
+            const body = new THREE.Mesh(bodyGeo, bodyMat);
+            escapeShip.add(body);
+
+            const engGeo = new THREE.CylinderGeometry(1, 2, 4, 8);
+            const engMat = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+            
+            const e1 = new THREE.Mesh(engGeo, engMat); e1.position.set(-5, -5, 0); e1.rotation.z = 0.2; escapeShip.add(e1);
+            const e2 = new THREE.Mesh(engGeo, engMat); e2.position.set(5, -5, 0); e2.rotation.z = -0.2; escapeShip.add(e2);
+            const e3 = new THREE.Mesh(engGeo, engMat); e3.position.set(0, -5, -5); e3.rotation.x = 0.2; escapeShip.add(e3);
+            const e4 = new THREE.Mesh(engGeo, engMat); e4.position.set(0, -5, 5); e4.rotation.x = -0.2; escapeShip.add(e4);
+
+            const cockGeo = new THREE.SphereGeometry(3, 16, 16);
+            const cockMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0.1 });
+            const cockpit = new THREE.Mesh(cockGeo, cockMat);
+            cockpit.position.set(0, 5, 8);
+            cockpit.scale.set(1, 0.8, 1.5);
+            escapeShip.add(cockpit);
+
+            escapeShip.position.set(0, 100, -100);
+            escapeShip.rotation.x = -Math.PI / 4; 
+            
+            scene.add(escapeShip);
+
+            const ringGeo = new THREE.RingGeometry(14, 16, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide, transparent: true, opacity: 0.5 });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = -Math.PI/2;
+            ring.position.set(0, 0.2, 0);
+            scene.add(ring);
+            
+            let landProgress = 0;
+            const landInterval = setInterval(() => {
+                landProgress += 0.01;
+                escapeShip.position.y = THREE.MathUtils.lerp(100, 12, landProgress);
+                escapeShip.position.z = THREE.MathUtils.lerp(-100, 0, landProgress);
+                escapeShip.rotation.x = THREE.MathUtils.lerp(-Math.PI/4, 0, landProgress);
+                
+                if(landProgress >= 1) {
+                    clearInterval(landInterval);
+                    showMessage("BOARDING AREA ACTIVE");
+                }
+            }, 16);
+        }
+
+        function tryEscape() {
+            if(!escapeShip || gameWon) return;
+            
+            const dist = controls.getObject().position.distanceTo(new THREE.Vector3(0, 1.6, 0));
+            if(dist < escapeZoneRadius) {
+                victory();
+            } else {
+                showMessage("TOO FAR FROM SHIP!");
+            }
+        }
+
+        function victory() {
+            gameWon = true;
+            controls.unlock();
+            stopMusic();
+            // Victory Sound
+            playTone(400, 'sine', 0.2, 0.3);
+            setTimeout(()=>playTone(500, 'sine', 0.2, 0.3), 200);
+            setTimeout(()=>playTone(600, 'sine', 0.4, 0.3), 400);
+            
+            document.querySelector('h1').innerText = "ПОБЕДА!";
+            document.querySelector('h1').style.color = "#0ff";
+            document.querySelector('.menu-box p').innerHTML = `You survived 100 waves and escaped.<br>Final Score: ${score}`;
+            document.getElementById('start-btn').innerText = "ИГРАТЬ СНОВА";
+            document.getElementById('blocker').style.display = 'flex';
+        }
+
+        // --- LOGIC: GRENADES ---
         function throwGrenade() {
             if(grenadeCount <= 0) {
                 showMessage("NO GRENADES!");
+                SFX.empty();
                 return;
             }
             
             grenadeCount--;
             updateUI();
+            SFX.shoot('rocket'); // Launch sound
 
             const now = performance.now();
             lastGrenadeTime = now;
 
-            // Создаем модель гранаты
             const geo = new THREE.SphereGeometry(0.2, 8, 8);
             const mat = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x004400 });
             const mesh = new THREE.Mesh(geo, mat);
             
-            // Позиция броска (от игрока)
             const startPos = controls.getObject().position.clone();
-            startPos.y -= 0.5; // Чуть ниже глаз
+            startPos.y -= 0.5; 
             
-            // Вектор направления
             const dir = new THREE.Vector3();
             controls.getDirection(dir);
             
             mesh.position.copy(startPos).add(dir.clone().multiplyScalar(1));
             
-            // Физика броска
-            const force = 25; // Сила броска вперед
-            const upForce = 10; // Подброс вверх
+            const force = 25; 
+            const upForce = 10; 
             
             mesh.userData = {
                 vel: dir.multiplyScalar(force).add(new THREE.Vector3(0, upForce, 0)),
                 spawnTime: now,
-                explodeTime: 2000, // 2 секунды до взрыва
+                explodeTime: 2000,
                 bounced: false
             };
             
@@ -459,8 +672,8 @@
 
         function explodeGrenade(grenade) {
             const pos = grenade.position;
+            SFX.explode();
             
-            // Визуал взрыва
             const light = new THREE.PointLight(0x00ff00, 10, 20);
             light.position.copy(pos);
             scene.add(light);
@@ -468,27 +681,22 @@
             
             createParticles(pos, 0x00ff00, 30);
             
-            // Урон по области
             const blastRadius = 12;
             const damage = 500;
             
             enemies.forEach(e => {
                 const dist = e.position.distanceTo(pos);
                 if(dist < blastRadius) {
-                    // Наносим урон
                     e.userData.hp -= damage;
                     
-                    // Отбрасывание
                     const pushDir = new THREE.Vector3().subVectors(e.position, pos).normalize();
                     e.position.add(pushDir.multiplyScalar(5));
                     
                     if(e.userData.type === 'boss') bossFill.style.width = (e.userData.hp/e.userData.maxHp*100)+'%';
                     
-                    // Проверка смерти
                     if(e.userData.hp <= 0) {
                         killEnemy(e);
                     } else {
-                        // Мигание белым
                         e.material.emissive.setHex(0xffffff);
                         setTimeout(()=>e.material.emissive.setHex(0x330000), 50);
                     }
@@ -502,7 +710,6 @@
         function killEnemy(e) {
              score += e.userData.type === 'boss' ? 5000 * bossLevel : 50;
                                 
-            // Если это босс - спавним аптечку
             if(e.userData.type === 'boss') {
                 spawnMedkit(e.position);
                 bossActive = false;
@@ -519,7 +726,7 @@
             updateUI();
         }
 
-        // --- ЛОГИКА СТРОИТЕЛЬСТВА И УЛУЧШЕНИЯ ---
+        // --- LOGIC: TURRETS ---
         function handleToolClick() {
             const raycaster = new THREE.Raycaster();
             raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
@@ -550,11 +757,13 @@
         function placeTurret(intersects) {
             if(turrets.length >= MAX_TURRETS) {
                 showMessage("MAX TURRETS (" + MAX_TURRETS + ") REACHED!");
+                SFX.empty();
                 return;
             }
 
             if(score < TURRET_COST) {
                 showMessage("Need " + TURRET_COST + " Points!");
+                SFX.empty();
                 return;
             }
 
@@ -575,6 +784,7 @@
 
                     createTurretMesh(pos, 1);
                     score -= TURRET_COST;
+                    SFX.build();
                     updateUI();
                     return;
                 }
@@ -687,12 +897,13 @@
             turrets = turrets.filter(existing => existing !== t);
             createTurretMesh(pos, nextLevel);
             createParticles(pos, 0xffff00, 20);
+            SFX.upgrade();
             showMessage("UPGRADED TO LEVEL " + nextLevel);
             updateUI();
         }
 
         function shoot() {
-            if(isReloading || isGameOver) return;
+            if(isReloading || isGameOver || gameWon) return;
             const now = performance.now();
             const w = WEAPONS[currentWeaponKey];
             if(now - lastShotTime < w.rate) return;
@@ -706,6 +917,7 @@
                 gunMesh.rotation.x += 0.15;
                 crosshair.classList.add('shooting');
                 setTimeout(() => crosshair.classList.remove('shooting'), 100);
+                SFX.shoot(w.type);
             }
 
             if(w.type === 'tool') {
@@ -744,6 +956,18 @@
 
         function startWave() {
             if(bossActive) return;
+            
+            // WIN CONDITION CHECK
+            if(wave > 100) {
+                if(!escapeShip) {
+                    spawnEscapeShip();
+                }
+                enemiesToSpawn = 10 + Math.floor(wave * 0.5);
+                uiWave.innerText = `WAVE ${wave} (ESCAPE!)`;
+                uiWave.style.color = "#00ffff";
+                return;
+            }
+
             if(wave > 1 && wave % BOSS_INTERVAL === 0) {
                 spawnBoss();
             } else {
@@ -840,7 +1064,7 @@
             msg.style.textShadow = '0 0 5px black';
             msg.style.pointerEvents = 'none';
             document.body.appendChild(msg);
-            setTimeout(() => msg.remove(), 1000);
+            setTimeout(() => msg.remove(), 2000);
         }
 
         function createParticles(pos, color, count) {
@@ -889,6 +1113,12 @@
         function gameOver() {
             isGameOver = true;
             controls.unlock();
+            stopMusic();
+            // Game Over Sound
+            playTone(300, 'sawtooth', 0.3, 0.3);
+            setTimeout(()=>playTone(200, 'sawtooth', 0.3, 0.3), 200);
+            setTimeout(()=>playTone(100, 'sawtooth', 0.5, 0.3), 400);
+
             document.querySelector('h1').innerText = "ПОТРАЧЕНО";
             document.querySelector('h1').style.color = "red";
             document.getElementById('start-btn').innerText = "ЗАНОВО";
@@ -896,7 +1126,7 @@
         }
 
         function resetGame() {
-            isGameOver = false; health = 100; score = 1000; wave = 1;
+            isGameOver = false; gameWon = false; health = 100; score = 1000; wave = 1;
             bossActive = false; bossLevel = 0; bossBar.style.display = 'none';
             enemiesToSpawn = 0;
             currentWeaponKey = 'blaster'; ammo = WEAPONS.blaster.mag;
@@ -909,6 +1139,7 @@
             turrets.forEach(t => scene.remove(t.mesh));
             items.forEach(i => scene.remove(i.mesh));
             particles.forEach(p => scene.remove(p));
+            if(escapeShip) { scene.remove(escapeShip); escapeShip = null; }
             
             enemies = []; bullets = []; grenades = []; turrets = []; items = []; particles = [];
             
@@ -934,11 +1165,10 @@
 
             upgradeMenu.style.display = 'none';
 
-            if(controls.isLocked && !isGameOver) {
-                // Регенерация гранат
+            if(controls.isLocked && !isGameOver && !gameWon) {
                 if(grenadeCount < MAX_GRENADES && time - lastGrenadeTime > GRENADE_REGEN_TIME) {
                     grenadeCount++;
-                    lastGrenadeTime = time; // Сброс таймера для следующей
+                    lastGrenadeTime = time; 
                     updateUI();
                 }
 
@@ -953,7 +1183,6 @@
                     if(WEAPONS[currentWeaponKey].auto || WEAPONS[currentWeaponKey].type === 'tool') shoot();
                 }
 
-                // Физика игрока
                 velocity.x -= velocity.x * 10.0 * delta;
                 velocity.z -= velocity.z * 10.0 * delta;
                 velocity.y -= 20.0 * delta;
@@ -991,30 +1220,40 @@
                     gunMesh.rotation.x = THREE.MathUtils.lerp(gunMesh.rotation.x, 0, 0.1);
                 }
 
-                // --- ФИЗИКА ГРАНАТ ---
+                if(escapeShip) {
+                    const dist = controls.getObject().position.distanceTo(new THREE.Vector3(0, 1.6, 0));
+                    if(dist < escapeZoneRadius) {
+                        if(!isInEscapeZone) {
+                            isInEscapeZone = true;
+                            escapeMsg.style.display = 'block';
+                        }
+                    } else {
+                        if(isInEscapeZone) {
+                            isInEscapeZone = false;
+                            escapeMsg.style.display = 'none';
+                        }
+                    }
+                }
+
                 for(let i=grenades.length-1; i>=0; i--) {
                     const g = grenades[i];
                     const age = time - g.userData.spawnTime;
                     
-                    // Гравитация
                     g.userData.vel.y -= 20.0 * delta;
                     g.position.addScaledVector(g.userData.vel, delta);
                     
-                    // Отскок от пола
                     if(g.position.y < 0.2) {
                         g.position.y = 0.2;
-                        g.userData.vel.y *= -0.5; // Теряем энергию
-                        g.userData.vel.x *= 0.8;  // Трение
+                        g.userData.vel.y *= -0.5; 
+                        g.userData.vel.x *= 0.8;  
                         g.userData.vel.z *= 0.8;
                     }
                     
-                    // Взрыв по времени или если застряла
                     if(age > g.userData.explodeTime) {
                         explodeGrenade(g);
                     }
                 }
 
-                // --- ПРЕДМЕТЫ (АПТЕЧКИ) ---
                 for(let i=items.length-1; i>=0; i--) {
                     const item = items[i];
                     item.mesh.rotation.y += delta;
@@ -1024,6 +1263,7 @@
                         if(item.type === 'medkit') {
                             health = Math.min(100, health + item.heal);
                             showMessage("MEDKIT USED: +" + item.heal + " HP");
+                            SFX.medkit();
                             createParticles(item.mesh.position, 0x00ff00, 10);
                             updateUI();
                         }
@@ -1032,7 +1272,6 @@
                     }
                 }
 
-                // --- ЛОГИКА ТУРЕЛЕЙ ---
                 turrets.forEach((t) => {
                     let target = null;
                     let minDist = t.range;
@@ -1099,7 +1338,6 @@
                     if(t.cooldown > 0) t.cooldown -= delta;
                 });
 
-                // Raycast для меню улучшения
                 if(currentWeaponKey === 'turret_tool') {
                     const raycaster = new THREE.Raycaster();
                     raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
@@ -1128,7 +1366,6 @@
                     }
                 }
 
-                // Спавн врагов
                 if(!bossActive && enemiesToSpawn > 0) {
                     spawnTimer += delta;
                     if(spawnTimer > 0.8) { spawnEnemy(); enemiesToSpawn--; spawnTimer = 0; updateUI(); }
@@ -1137,7 +1374,6 @@
                     startWave();
                 }
 
-                // Частицы
                 for(let i=particles.length-1; i>=0; i--) {
                     const p = particles[i];
                     p.position.addScaledVector(p.userData.vel, delta);
@@ -1147,7 +1383,6 @@
                     if(p.userData.life <= 0) { scene.remove(p); particles.splice(i,1); }
                 }
 
-                // Пули
                 for(let i=bullets.length-1; i>=0; i--) {
                     const b = bullets[i];
                     b.position.addScaledVector(b.userData.vel, delta);
@@ -1162,8 +1397,10 @@
                         if(b.position.distanceTo(e.position) < distLimit) {
                             hit = true;
                             createParticles(b.position, b.userData.type === 'fire' ? 0xffaa00 : (b.userData.type === 'rocket' ? 0xff0000 : b.material.color), 3);
+                            SFX.hit();
 
                             if(b.userData.type === 'rocket') {
+                                SFX.explode();
                                 const exp = new THREE.PointLight(0xffaa00, 5, 15);
                                 exp.position.copy(b.position); scene.add(exp);
                                 setTimeout(()=>scene.remove(exp), 100);
@@ -1188,7 +1425,6 @@
                     if(hit && b.userData.type !== 'fire') { scene.remove(b); bullets.splice(i,1); }
                 }
 
-                // Враги
                 const pPos = controls.getObject().position;
                 enemies.forEach(e => {
                     let targetPos = pPos;
